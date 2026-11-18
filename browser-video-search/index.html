@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Video Search</title>
+    <meta
+      name="description"
+      content="Search videos, photos and your live camera by what is in them, and get told when something comes into view, with EmbeddingGemma 2 running in your browser on WebGPU."
+    />
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="app.js"></script>
+    <script>
+      // Opened straight from disk, the browser refuses the page's modules and data/ files, so
+      // nothing would ever load: say how to open it instead. (A classic script, so it still runs.)
+      if (location.protocol === "file:") {
+        addEventListener("DOMContentLoaded", () => {
+          const note = document.getElementById("source");
+          note.className = "error";
+          note.innerHTML =
+            "This page has to be served, not opened as a file: browsers block its scripts and " +
+            "data from <code>file://</code>. In this folder run <code>npx serve .</code> and open " +
+            "the address it prints, or put the folder on GitHub Pages.";
+        });
+      }
+    </script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Visual search, in your browser</h1>
+        <p>
+          Every frame and every question is turned into a vector by
+          <a href="https://huggingface.co/onnx-community/embeddinggemma-2-ONNX">EmbeddingGemma 2</a>
+          running on your own GPU (WebGPU), so you can search a video, your photos or your
+          camera by describing what you saw, and ask to be told when something comes into view.
+          Nothing is uploaded: the model downloads once and stays in your browser.
+        </p>
+        <p id="model-status" class="muted">Preparing the model…</p>
+      </header>
+
+      <div class="layout">
+        <section class="player" aria-label="What is being searched">
+          <div class="sources" role="tablist" aria-label="Source">
+            <button type="button" role="tab" data-source="demo" aria-selected="true">Demo video</button>
+            <button type="button" role="tab" data-source="video" aria-selected="false">Your video</button>
+            <button type="button" role="tab" data-source="photos" aria-selected="false">Your photos</button>
+            <button type="button" role="tab" data-source="camera" aria-selected="false">Live camera</button>
+          </div>
+
+          <div class="viewer">
+            <video id="video" controls playsinline preload="metadata"></video>
+            <img id="still" alt="" hidden />
+            <div id="alert" class="alert" role="alert" hidden>
+              <img id="alert-frame" alt="" />
+              <div>
+                <p class="alert-title">Spotted: <span id="alert-text"></span></p>
+                <p class="small" id="alert-detail"></p>
+                <button id="alert-wrong" type="button">Not this</button>
+                <button id="alert-close" type="button">OK</button>
+              </div>
+            </div>
+          </div>
+          <div id="timeline" class="timeline" aria-label="Where the moments are"></div>
+          <p id="source" class="muted">Loading the demo…</p>
+
+          <div class="panel" data-panel="demo">
+            <p id="credit" class="muted small"></p>
+          </div>
+
+          <div class="panel" data-panel="video" hidden>
+            <div class="row">
+              <input id="file" type="file" accept="video/*" />
+              <label>
+                Frames
+                <select id="every">
+                  <option value="1">1 per second</option>
+                  <option value="0.5" selected>2 per second</option>
+                  <option value="2">1 every 2 seconds</option>
+                </select>
+              </label>
+            </div>
+            <div class="row">
+              <button id="index-button" type="button" class="primary">Index this video</button>
+              <button id="stop-button" type="button" hidden>Stop</button>
+              <button id="download-button" type="button" title="Save the index to host it with the video">
+                Download index.json
+              </button>
+            </div>
+            <p class="muted small">
+              The image encoder adds about 100 MB to the download. A frame much like the one
+              before it is skipped. Put the video and its index in <code>data/</code> to make
+              it the page's demo.
+            </p>
+          </div>
+
+          <div class="panel" data-panel="photos" hidden>
+            <div class="row">
+              <input id="photos" type="file" accept="image/*" multiple />
+            </div>
+            <p class="muted small">
+              Pick any number of photos: each is embedded here and can then be searched.
+            </p>
+          </div>
+
+          <div class="panel" data-panel="camera" hidden>
+            <div class="row">
+              <button id="camera-button" type="button" class="primary">Start the camera</button>
+              <button id="flip-button" type="button" hidden>Switch camera</button>
+            </div>
+            <p class="muted small">
+              Two frames a second are embedded and remembered while the camera runs, so you
+              can search what it saw and be told when something you watch for comes into view.
+              The camera stays on this device.
+            </p>
+          </div>
+        </section>
+
+        <section class="search" aria-label="Search">
+          <form id="search-form" class="row">
+            <label for="query" class="sr-only">What are you looking for?</label>
+            <input id="query" type="search" placeholder="Describe what you saw, e.g. “the meat counter”" autocomplete="off" />
+            <button id="ask-button" type="submit" class="primary">Search</button>
+          </form>
+          <div id="examples" class="examples"></div>
+
+          <form id="watch-form" class="row watch">
+            <label for="watch" class="sr-only">Tell me when I see…</label>
+            <input id="watch" type="text" placeholder="Tell me when I see… e.g. “a red shopping basket”" autocomplete="off" />
+            <button id="watch-button" type="submit">Watch for it</button>
+          </form>
+          <ul id="watching" class="watching" aria-label="Watching for"></ul>
+          <p id="watch-note" class="muted small">
+            Watching works on a playing video and on the live camera: a frame that stands out
+            from the last 20 seconds for what you described sets it off.
+          </p>
+
+          <progress id="progress" max="1" value="0" hidden></progress>
+          <p id="progress-text" class="muted small" aria-live="polite"></p>
+          <p id="error" class="error" role="alert" hidden></p>
+          <div id="results" class="results" aria-live="polite"></div>
+        </section>
+      </div>
+
+      <dialog id="zoom">
+        <img id="zoom-image" alt="" />
+        <form method="dialog"><button type="submit">Close</button></form>
+      </dialog>
+
+      <footer class="muted small">
+        <!-- app.js rewrites this from data/index.json's "credit" when the demo changes. -->
+        <span id="footer-credit"
+          >Demo video:
+          <a href="https://www.pexels.com/fi-fi/video/monipuolinen-ostokokemus-supermarketissa-39240106/"
+            >“Monipuolinen ostokokemus supermarketissa”</a
+          >
+          by Kiwi and Camera, from Pexels (<a href="https://www.pexels.com/license/">Pexels License</a>).</span
+        >
+        Model: EmbeddingGemma 2 by Google, ONNX by onnx-community, run with Transformers.js.
+      </footer>
+    </main>
+  </body>
+</html>

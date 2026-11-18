@@ -1,0 +1,9 @@
+{
+  "name": "video-search-tools",
+  "private": true,
+  "type": "module",
+  "description": "Builds data/index.json for the page outside the browser (make-index.mjs).",
+  "dependencies": {
+    "@huggingface/transformers": "4.3.2"
+  }
+}
